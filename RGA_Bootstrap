@@ -242,17 +242,16 @@ ADDomain="empty"
 Counter=0
 while [ "$ADDomain" != ***REMOVED*** ]
 do
-ADDomain=$(/usr/bin/dig srv _LDAP._TCP.DC._MSDCS.***REMOVED*** +tcp +tries=1 +retry=1 +short | awk -F "." 'NR==1{print$2"."$3"."$4}')
-if [ "$ADDomain" = ***REMOVED*** ]
+ADDomain=$(/usr/bin/dig srv _LDAP._TCP.DC._MSDCS.INSERT_AD_DOMAIN_HERE +tcp +tries=1 +retry=1 +short | awk -F "." 'NR==1{print$2"."$3"."$4}')
+if [ "$ADDomain" = INSTERT_YOUR AD DOMAIN HERE ]
 then
-ScriptLogging "R/GA Active Directory Domain found."
+ScriptLogging "ORG NAME Active Directory Domain found."
 ScriptLogging "$HOSTNAME is now bound to Active Directory. Pausing 10 Seconds."
 /bin/sleep 10
 elif [ "$Counter" = 3 ]
 then
-ScriptLogging "R/GA Active Directory Domain NOT FOUND. We must trudge on anyway."
-ScriptLogging "You're gonna want to check if the machine found Altaria."
-ADDomain=***REMOVED***
+ScriptLogging "ORG NAME Active Directory Domain NOT FOUND. We must trudge on anyway."
+ADDomain=INSERT AD DOMAIN HERE
 fi
 Counter=$((Counter+1))
 done
@@ -287,10 +286,13 @@ ScriptLogging "Disabling Login Window passowrd expiration prompts."
 ScriptLogging "Configuring remote access."
 
 ## Turn on SSH
+## YOU MIGHT NOT WANT TO DO THIS IS YOUR ORG 
+## Especially if not using JAMF REMOTE
 /usr/sbin/systemsetup -setremotelogin on
 
 ## Add admin accounts to Sharing pane for ARD
-/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -privs -all -users macdtadmin
+## This will not work with Mojave and above without additional modifications
+/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -privs -all -users INSERT ADMIN USER HERR
 
 ScriptLogging "Setting additional system preferences"
 
@@ -299,9 +301,10 @@ ScriptLogging "Disbale Time Machine offerings"
 /usr/bin/defaults write /Library/Preferences/com.apple.TimeMachine DoNotOfferNewDisksForBackup -bool true
 
 ## Set SUS URL - this gets reset with the location's local SUS
+## Comment out to use Apple's Default Servers
 ScriptLogging "Setting software update server settings and checking intervals" 
-/usr/bin/defaults write /var/root/Library/Preferences/com.apple.SoftwareUpdate CatalogURL http://ubususny01.***REMOVED***:80/index.sucatalog
-/usr/bin/defaults write /Library/Preferences/com.apple.SoftwareUpdate CatalogURL http://ubususny01.***REMOVED***:80/index.sucatalog
+/usr/bin/defaults write /var/root/Library/Preferences/com.apple.SoftwareUpdate CatalogURL http://YOUR_SUS_HERE:80/index.sucatalog
+/usr/bin/defaults write /Library/Preferences/com.apple.SoftwareUpdate CatalogURL http://YOUR_SUS_HERE:80/index.sucatalog
 
 ##Turn off all software update checking from the app store
 /usr/sbin/softwareupdate --schedule off
@@ -379,7 +382,7 @@ ScriptLogging "Customizing the login window..."
 /usr/bin/defaults write /Library/Preferences/com.apple.loginwindow SHOWFULLNAME -bool true
 
 ## Add a message to the Lock Screen
-/usr/bin/defaults write /Library/Preferences/com.apple.loginwindow LoginwindowText "For assistance email help@rga.com"
+/usr/bin/defaults write /Library/Preferences/com.apple.loginwindow LoginwindowText "YOUR TEXT HERE"
 
 ## Synchronize the FileVault and GUI loginwindows by using the touch command
 ## and removing the efi cache files for instances where the touch command does not work
@@ -415,11 +418,11 @@ if [[ ${osvers} -ge 10 ]]; then
       /bin/sleep 1
       # Keep the statmentents within the echo command left justifed
       # otherwise it writes white space which we don't want.
-echo "# Configuration file for R/GA SMB Mounts
+echo "# Configuration file for SMB Mounts
 #
 [default]
 # Disables checking for SMB signing on the client.
-# Digital signing is not used at R/GA and checking for it causes SMB
+# If digital signing is not used checking for it causes SMB
 # preformance issues on the client.
 signing_required=no
 # Setting file_ids to yes allows the local finder to refresh itself
@@ -430,11 +433,11 @@ file_ids_off=yes" > /etc/nsmb.conf
       ScriptLogging "nsmb.conf was removed and updated"
    #
    else
-echo "# Configuration file for R/GA SMB Mounts 
+echo "# Configuration file for SMB Mounts 
 #
 [default]
 # Disables checking for SMB signing on the client.
-# Digital signing is not used at R/GA and checking for it causes SMB
+# If digital signing is not used checking for it causes SMB
 # preformance issues on the client.
 signing_required=no
 # Setting file_ids to yes allows the local finder to refresh itself
@@ -450,6 +453,7 @@ ScriptLogging "Disable *Connecting to Server for the first time* pop up."
 /usr/bin/defaults write /Library/Preferences/com.apple.NetworkAuthorization AllowUnknownServers -bool YES
 
 ScriptLogging "Configuring Default Desktop Image"
+###This will not work on mojave in most cases
 
 if [[ ${osvers} -eq 12 ]]
   then
@@ -458,7 +462,7 @@ if [[ ${osvers} -eq 12 ]]
     ScriptLogging "Moving RGA Default Desktop image for OS 10.12 into place"
     mv /Library/Desktop\ Pictures/Sierra.jpg /Library/Desktop\ Pictures/Sierra_Default.jpg
     sleep 1
-    mv /Library/Desktop\ Pictures/RGA-Desktop.jpg /Library/Desktop\ Pictures/Sierra.jpg
+    mv /Library/Desktop\ Pictures/YOUR IMAGE FILE HERE /Library/Desktop\ Pictures/Sierra.jpg
     else
     ScriptLogging "Looks like the OS X Default Image for 10.12 has already been moved out of the way. Not taking any action"
     fi
@@ -469,7 +473,7 @@ elif [[ ${osvers} -eq 13 ]]
     ScriptLogging "Moving RGA Default Desktop image  for OS 10.13 into place"
     mv /Library/Desktop\ Pictures/High\ Sierra.jpg /Library/Desktop\ Pictures/High\ Sierra_Default.jpg
     sleep 1
-    mv /Library/Desktop\ Pictures/RGA-Desktop.jpg /Library/Desktop\ Pictures/High\ Sierra.jpg
+    mv /Library/Desktop\ Pictures/YOUR IMAGE FILE HERE /Library/Desktop\ Pictures/High\ Sierra.jpg
     else
     ScriptLogging "Looks like the OS X Default Image for 10.13 has already been moved out of the way. Not taking any action"
     fi
@@ -513,6 +517,7 @@ AD_COMPNAME=$(dsconfigad -show | sed -n 's/\$//g;s/Computer.Account.*.=.//p')
 MACHINE_CERT=$(security find-certificate -a -c "${AD_COMPNAME}" -Z | grep SHA | awk '{print $3}' | awk 'END{print$0}')
 
 ##Create an xml config file for the vpn agent that will reside in the user home folder
+##Add values for Keys as necessary
 
 echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <AnyConnectPreferences>
@@ -520,9 +525,9 @@ echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <DefaultSecondUser></DefaultSecondUser>
 <ClientCertificateThumbprint>${MACHINE_CERT}</ClientCertificateThumbprint>
 <ServerCertificateThumbprint></ServerCertificateThumbprint>
-<DefaultHostName>Edison Data Center</DefaultHostName>
+<DefaultHostName></DefaultHostName>
 <DefaultHostAddress></DefaultHostAddress>
-<DefaultGroup>RGA</DefaultGroup>
+<DefaultGroup></DefaultGroup>
 <ProxyHost></ProxyHost>
 <ProxyPort></ProxyPort>
 <SDITokenType>none</SDITokenType>
@@ -1011,7 +1016,6 @@ ScriptLogging "Removing extraneous items post enrollment."
    ScriptLogging "Removing buildadmin home directory"
    /bin/rm -R /Users/buildadmin
    fi
-
 
 ## Reomving Appple Default Appplications 
 ## Check for and remove Garageband Application
