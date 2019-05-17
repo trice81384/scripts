@@ -1,0 +1,1068 @@
+#!/bin/bash
+#
+# Script to enforce settings in OSX image
+# Meant to be used with First Boot Package Install.pkg
+# Orignial Script Devleoped by memebers of the R/GA Macintosh Systems Team
+# Some settings adapted from the awesome Rich Trouton: https://github.com/rtrouton/rtrouton_scripts/blob/master/rtrouton_scripts/first_boot/10.10/first_boot.sh
+# Modifed by Tom Rice 7/3/2018
+# Version 1.5.1
+# Uses the Script Logging function to output to Login log and begins to rorganize subprocesses into functions
+
+FirstBootLog="/var/log/firstbootpackageinstall.log"
+/usr/bin/touch "$FirstBootLog"
+
+exec 1>> "$FirstBootLog" 2>&1
+
+# Function to provide logging of the script's actions to the log file specified by the FirstBootLog
+
+ScriptLogging(){
+
+    DATE=$(date +%Y-%m-%d\ %H:%M:%S)
+    LOG="$FirstBootLog"
+    
+    echo "$DATE" " $1" >> $LOG
+}
+
+########## Give some time for things to shift into place ##########
+ScriptLogging "Intializing..."
+/bin/sleep 5
+ScriptLogging "Please be patient..."
+/bin/sleep 5
+ScriptLogging "R/GA Configuration Script will begin in 10 seconds:"
+/bin/sleep 10
+
+########## Detect new hardware ##########
+# Commented out 12/20/2016 because the same command is already in the wrapper script
+# Uncomment if not using First Boot Package Installer
+#ScriptLogging "Detecting new hardware."
+#/usr/sbin/networksetup -detectnewhardware
+
+########### Get Basic Machine information and initialize variables##########
+ScriptLogging "Determining OS and Hardware Information"
+osvers=$(sw_vers -productVersion | awk -F. '{print $2}')
+sw_version=$(sw_vers -productVersion)
+sw_build=$(sw_vers -buildVersion)
+machine_model=$(sysctl hw.model | awk '{print$2}')
+hardware_type=$(sysctl hw.model | awk '{print$2}' | tr -cd "[:alpha:]")
+## Stderr is redirected to /dev/null after the system_profiler command is run to suppress innocous warnings.
+## Must be run right after the system_profiler command and not after the additional pipes
+UUID=$(/usr/sbin/system_profiler SPHardwareDataType 2> /dev/null | grep "Hardware UUID" | cut -c22-57)
+plistBuddy="/usr/libexec/PlistBuddy"
+jamfBinary=""
+
+JamfBinaryCheck(){
+
+########## Begin JAMF Binary check ##########
+## This if statement is designed to check for the location of the jamf binary in multiple places 
+## due to changes in OSX associated with JAMF's upgrade to version 9.81
+## References to the JAMF Binary must be changed to "$jamfBinary"
+## Added 2/9/16 by tomr
+## Can be removed if not using JAMF or JAMF Pro Server is 10.11 or greater
+##
+if [ -e /usr/sbin/jamf ]
+   then
+       # JAMF Binary found at pre 9.81 location
+       ScriptLogging "JAMF Binary found at pre 9.81 location"
+       jamfBinary="/usr/sbin/jamf"
+       #
+   elif [ -e /usr/local/jamf/bin/jamf ]
+   then
+      # JAMF Binary found at 9.81 or later location
+      ScriptLogging "JAMF Binary found at 9.81 or later location"
+      jamfBinary="/usr/local/jamf/bin/jamf"
+      #
+   elif [ -e /usr/local/bin/jamf ]
+   then
+      # Alias to the JAMF Binary found
+      ScriptLogging "Alias to the JAMF Binary found"
+      jamfBinary="/usr/local/bin/jamf"
+      #
+   else
+   ScriptLogging "JAMF Binary not found"
+fi
+
+########## End JAMF Binary Check ##########
+}
+
+########## Configuring System Settings ##########
+
+ScriptLogging "==========================================="
+ScriptLogging "Configuring System Settings"
+
+## Enable location services
+## This should be set during DEP enrollment but we'll leave it here incase a tech skips that step
+ScriptLogging "Enabling location services"
+/bin/launchctl unload /System/Library/LaunchDaemons/com.apple.locationd.plist
+#
+## The location services plist has the machines UUID in it. Normally we would append the UUID vairable while using the defaults
+## command but this was cuasing a duplicate UUID to be appended to the plist so now we're just using the begining of the plist name which
+## is ok because for now there is only one plist that starts with com.apple.locationd in this folder. 
+#
+/usr/bin/defaults write /var/db/locationd/Library/Preferences/ByHost/com.apple.locationd "LocationServicesEnabled" -int 1
+/usr/sbin/chown -R _locationd:_locationd /var/db/locationd
+/bin/chmod -R 755 /var/db/locationd
+/bin/launchctl load /System/Library/LaunchDaemons/com.apple.locationd.plist
+/bin/sleep 5
+ScriptLogging "Location Services Configuration Done"
+
+ScriptLogging "Configuring Client Date and Time Settings"
+
+## Create ntp.conf file with default vaulues to suppress log messages about it not intitally existing
+/bin/echo "server time.apple.com." > /etc/ntp.conf
+/usr/sbin/chown root:wheel /etc/ntp.conf
+/bin/chmod 644 /etc/ntp.conf
+/bin/sleep 3
+
+## Set time based on current location
+## Modified from script listed here: https://jamfnation.jamfsoftware.com/discussion.html?id=6835 by ericbenfer
+
+ScriptLogging "Setting initial date and time information"
+## Setting initial time zone variables.
+## This gets changed after location services are enabled and option for setting time zone by location is enabled
+TIMEZONE="America/New_York"
+TIMESERVER="time.apple.com"
+/bin/sleep 3
+
+## Turn network time server off.
+/usr/sbin/systemsetup -setusingnetworktime off
+
+## Set initial time zone and time server
+ScriptLogging "Setting initial time zone and server, this will change based on the location of the device"
+/usr/sbin/systemsetup -settimezone "$TIMEZONE"
+/usr/sbin/systemsetup -setnetworktimeserver "$TIMESERVER"
+
+# Set time zone automatically based on location
+ScriptLogging "Set time zone automatically based on location"
+/usr/bin/defaults write /Library/Preferences/com.apple.timezone.auto Active -bool true
+
+# Turn on network time, get current time zone and time
+/usr/sbin/systemsetup -setusingnetworktime on
+/usr/sbin/systemsetup -gettimezone
+/usr/sbin/systemsetup -getnetworktimeserver
+/bin/sleep 5
+
+### Bind Computer to Active Directory###
+##Utilizing copy and paste bindtoAD-20121205.sh script
+
+## Perform a prebind recon
+ScriptLogging "Performing a recon."
+JamfBinaryCheck
+"$jamfBinary" recon
+
+ScriptLogging "### Preparing to Bind Computer to Active Directory ###"
+
+# Get the Hostname for the computer and then translate lowercase characters to uppercase to conform
+# to AD Nomanclature. We user lower and upper instead of ranges in tr to account for all languagues if applicable.
+HOSTNAME=$(scutil --get ComputerName | tr '[:lower:]' '[:upper:]')
+USER='ldap_bind_casper'
+PASS='GahU5bXtccDdUkQ'
+DOMAIN='ny.rga.com'
+OU='OU=Mac Computer Accounts,OU=Workstations,OU=Computer_accounts,DC=ny,DC=rga,DC=com'
+
+ScriptLogging "Hostname is set to $HOSTNAME"
+
+ScriptLogging "Removing computer from AD if it currently exists"
+/usr/sbin/dsconfigad -remove -force -username "$USER" -password "$PASS" > /dev/null 2>&1
+
+ScriptLogging "Binding computer to Active Directory"
+/usr/sbin/dsconfigad -add "$DOMAIN" -computer "$HOSTNAME" -username "$USER" -password "$PASS" -ou "$OU" -force
+/bin/sleep 1
+
+ScriptLogging "Creating mobile account at login"
+/bin/sleep 1
+/usr/sbin/dsconfigad -mobile enable
+
+ScriptLogging "Disabling confirmation for mobile account creation"
+/bin/sleep 1
+/usr/sbin/dsconfigad -mobileconfirm disable
+
+ScriptLogging "Forcing local home directory on startup disk"
+/bin/sleep 1
+/usr/sbin/dsconfigad -localhome enable
+
+ScriptLogging "Disabling UNC path use from AD"
+/bin/sleep 1
+/usr/sbin/dsconfigad -useuncpath disable
+
+ScriptLogging "Setting default user shell to bash"
+/bin/sleep 1
+/usr/sbin/dsconfigad -shell '/bin/bash'
+
+ScriptLogging "Setting no preferred domain server"
+/bin/sleep 1
+/usr/sbin/dsconfigad -nopreferred
+
+ScriptLogging "Setting domain admins, systems, and enterprise admins as groups allowed to administer computer"
+/bin/sleep 1
+/usr/sbin/dsconfigad -groups "domain admins,systems,enterprise admins"
+
+ScriptLogging "Disabling authentication from any domain in the forest"
+/bin/sleep 1
+/usr/sbin/dsconfigad -alldomains disable
+
+ScriptLogging "Adjusting client AD Computer Object Password Interval"
+/bin/sleep 1
+/usr/sbin/dsconfigad -passinterval 30
+
+ScriptLogging "Setting authentication search locations"
+ScriptLogging "Adding ny.rga.com to search"
+/bin/sleep 1
+/usr/bin/dscl /Search -append / CSPSearchPath "/Active Directory/RGA/ny.rga.com"
+
+ScriptLogging "Removing All Domains from search path"
+/bin/sleep 1
+/usr/bin/dscl /Search -delete / CSPSearchPath "/Active Directory/RGA/All Domains"
+
+if [ -e /var/log/secure.log ]
+   then 
+      /bin/rm /var/log/secure.log
+      /usr/bin/touch /var/log/secure.log
+   else
+     /usr/bin/touch /var/log/secure.log
+fi
+
+ScriptLogging "Active Directory binding steps complete."
+ScriptLogging "Pausing for 5 seconds."
+/bin/sleep 5
+
+##### We run the JAMF Binary Check again because at some point after
+##### the bind to AD the JAMF Binary is moved. Prior to the bind the binary
+##### is found at a Pre 9.81 location. This might be do in part to an old
+##### version of casper imaging being used.
+#####
+ScriptLogging "Updating JAMF Binary Information post AD Bind"
+jamfBinary=""
+JamfBinaryCheck
+
+### Check for AD Domain Controllers and wait if they are not found
+
+ScriptLogging "Checking for Successful AD Bind and Connectivity"
+
+ADDomain="empty"
+Counter=0
+while [ "$ADDomain" != ny.rga.com ]
+do
+ADDomain=$(/usr/bin/dig srv _LDAP._TCP.DC._MSDCS.NY.RGA.COM +tcp +tries=1 +retry=1 +short | awk -F "." 'NR==1{print$2"."$3"."$4}')
+if [ "$ADDomain" = ny.rga.com ]
+then
+ScriptLogging "R/GA Active Directory Domain found."
+ScriptLogging "$HOSTNAME is now bound to Active Directory. Pausing 10 Seconds."
+/bin/sleep 10
+elif [ "$Counter" = 3 ]
+then
+ScriptLogging "R/GA Active Directory Domain NOT FOUND. We must trudge on anyway."
+ScriptLogging "You're gonna want to check if the machine found Altaria."
+ADDomain=ny.rga.com
+fi
+Counter=$((Counter+1))
+done
+/bin/sleep 1
+
+### Perform a recon now to get the configuration profiles and as a reuslt the machine certificates
+### to come down.
+
+ScriptLogging "Performing a post bind recon to pull down certificate profiles."
+"$jamfBinary" recon
+
+ScriptLogging "### Active Directory binding complete ###"
+
+ScriptLogging "Configuring Directory Server Delays."
+
+## Delay the loginwindow for 10 seconds so a connection to a directory service can be established. The delay will be less if a domain
+## controller is found before the specified interval.
+
+/usr/bin/defaults write /Library/Preferences/com.apple.loginwindow StartupDelay -int 10
+
+## Force the delay to be applied
+## The effect of both of the delay settings are questionable
+
+/usr/bin/defaults write /Library/Preferences/com.apple.loginwindow StartupDelayForced -bool YES
+
+ScriptLogging "Disabling Login Window passowrd expiration prompts."
+
+## Disable the AD LoginWindow PasswordChange prompts
+## This is so users will only be notified via Enterprise Connect
+/usr/bin/defaults write /Library/Preferences/com.apple.loginwindow.plist PasswordExpirationDays -int 0
+
+ScriptLogging "Configuring remote access."
+
+## Turn on SSH
+/usr/sbin/systemsetup -setremotelogin on
+
+## Add admin accounts to Sharing pane for ARD
+/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -privs -all -users macdtadmin
+
+ScriptLogging "Setting additional system preferences"
+
+## Disable Time Machine
+ScriptLogging "Disbale Time Machine offerings"
+/usr/bin/defaults write /Library/Preferences/com.apple.TimeMachine DoNotOfferNewDisksForBackup -bool true
+
+## Set SUS URL - this gets reset with the location's local SUS
+ScriptLogging "Setting software update server settings and checking intervals" 
+/usr/bin/defaults write /var/root/Library/Preferences/com.apple.SoftwareUpdate CatalogURL http://ubususny01.ny.rga.com:80/index.sucatalog
+/usr/bin/defaults write /Library/Preferences/com.apple.SoftwareUpdate CatalogURL http://ubususny01.ny.rga.com:80/index.sucatalog
+
+##Turn off all software update checking from the app store
+/usr/sbin/softwareupdate --schedule off
+
+## Turn off bluetooth
+ScriptLogging "Disabling Bluetooth"
+/usr/bin/defaults write /Library/Preferences/com.apple.Bluetooth.plist ControllerPowerState 0
+
+##Configure Crash Reporter Settings
+
+ScriptLogging "Disabling Crash Reporter"
+
+## Set whether you want to send diagnostic info back to Apple and/or third party app developers. 
+## If you want to send diagonostic data to Apple, set the value
+## for the SUBMIT_DIAGNOSTIC_DATA_TO_APPLE to the following:
+##
+## SUBMIT_DIAGNOSTIC_DATA_TO_APPLE=TRUE
+##
+## If you want to send data to third party app developers, set the value for the
+## SUBMIT_DIAGNOSTIC_DATA_TO_APP_DEVELOPERS to the following:
+##
+## SUBMIT_DIAGNOSTIC_DATA_TO_APP_DEVELOPERS=TRUE
+##
+## By default, the values in this script are set to send no diagnostic data:
+## To change this in your own script, comment out the FALSE lines and uncomment the TRUE lines as appropriate.
+
+SUBMIT_DIAGNOSTIC_DATA_TO_APPLE=FALSE
+SUBMIT_DIAGNOSTIC_DATA_TO_APP_DEVELOPERS=FALSE
+
+# Set the appropriate number value for AutoSubmitVersion and ThirdPartyDataSubmitVersion by the OS version. 
+# For 10.10.x, the value will be 4. 
+# For 10.11.x, the value will be 5.
+# For 10.12.x, the value will be 5.
+# Not necessarily needed as the OS tends to set the correct version but better safe than sorry.
+
+if [[ ${osvers} -eq 10 ]]; then
+  VERSIONNUMBER=4
+elif [[ ${osvers} -ge 11 ]]; then
+  VERSIONNUMBER=5
+fi
+
+## Checks first to see if the Mac is running 10.10.0 or higher.
+## If so, the desired diagnostic submission settings are applied.
+
+if [[ ${osvers} -ge 10 ]]; then
+
+  CRASHREPORTER_SUPPORT="/Library/Application Support/CrashReporter"
+
+  if [ ! -d "${CRASHREPORTER_SUPPORT}" ]; then
+    mkdir "${CRASHREPORTER_SUPPORT}"
+    chmod 775 "${CRASHREPORTER_SUPPORT}"
+    chown root:admin "${CRASHREPORTER_SUPPORT}"
+  fi
+
+ /usr/bin/defaults write "$CRASHREPORTER_SUPPORT"/DiagnosticMessagesHistory AutoSubmit -boolean "$SUBMIT_DIAGNOSTIC_DATA_TO_APPLE"
+ /usr/bin/defaults write "$CRASHREPORTER_SUPPORT"/DiagnosticMessagesHistory AutoSubmitVersion -int "$VERSIONNUMBER"
+ /usr/bin/defaults write "$CRASHREPORTER_SUPPORT"/DiagnosticMessagesHistory ThirdPartyDataSubmit -boolean "$SUBMIT_DIAGNOSTIC_DATA_TO_APP_DEVELOPERS"
+ /usr/bin/defaults write "$CRASHREPORTER_SUPPORT"/DiagnosticMessagesHistory ThirdPartyDataSubmitVersion -int "$VERSIONNUMBER"
+ /bin/chmod a+r "$CRASHREPORTER_SUPPORT"/DiagnosticMessagesHistory.plist
+ /usr/sbin/chown root:admin "$CRASHREPORTER_SUPPORT"/DiagnosticMessagesHistory.plist
+
+fi
+
+## Show all filename extensions
+ScriptLogging "Show all filename extensions"
+/usr/bin/defaults write NSGlobalDomain AppleShowAllExtensions -bool true
+
+## Customizing the login window
+ScriptLogging "Customizing the login window..."
+
+## Show computer admin info at the login window
+/usr/bin/defaults write /Library/Preferences/com.apple.loginwindow AdminHostInfo HostName
+
+## Set login window to name & password
+/usr/bin/defaults write /Library/Preferences/com.apple.loginwindow SHOWFULLNAME -bool true
+
+## Add a message to the Lock Screen
+/usr/bin/defaults write /Library/Preferences/com.apple.loginwindow LoginwindowText "For assistance email help@rga.com"
+
+## Synchronize the FileVault and GUI loginwindows by using the touch command
+## and removing the efi cache files for instances where the touch command does not work
+## Touch command commented out 8/17/2016 because it was erroring out
+#/usr/bin/touch /System/Library/PrivateFrameworks/EFILogin.framework/Resources/EFIResourceBuilder.bundle/Contents/Resources
+
+/bin/rm -rf /System/Library/Caches/com.apple.corestorage/EFILoginLocalizations/*.efires
+
+## Turn off notifications about upgrading to a new OS
+## Set these to a date after the script’s modification date so they are assumed not to have happened yet and not run
+## This setting does not always hold
+
+/usr/bin/defaults write /Library/Preferences/com.apple.commerce WhatsNewNotificationDate -date '2055-08-01 20:46:47 +0000'
+/bin/sleep 1
+/usr/bin/defaults write /Library/Preferences/com.apple.commerce WhatsNewOnlinePageViewDate -date '2055-08-01 20:46:47 +0000'
+/bin/sleep 1
+
+## Add everyone to the print operator group so they can unpause print queues
+ScriptLogging "Allowing users to unpause print queues"
+/usr/sbin/dseditgroup -o edit -n /Local/Default -a everyone -t group _lpoperator
+
+## Allow machine certificates to be automatically renewed when they are nearing expiration
+ScriptLogging "Allowing machine certificate auto renewal"
+/usr/bin/defaults write /Library/Preferences/com.apple.mdmclient AutoRenewCertificatesEnabled -bool YES
+
+## Creating nsmb.conf file to improve SMB performance
+ScriptLogging "Creating nsmb.conf file"
+
+if [[ ${osvers} -ge 10 ]]; then
+   if [ -e /etc/nsmb.conf ]
+      then
+      rm -rf /etc/nsmb.conf
+      /bin/sleep 1
+      # Keep the statmentents within the echo command left justifed
+      # otherwise it writes white space which we don't want.
+echo "# Configuration file for R/GA SMB Mounts
+#
+[default]
+# Disables checking for SMB signing on the client.
+# Digital signing is not used at R/GA and checking for it causes SMB
+# preformance issues on the client.
+signing_required=no
+# Setting file_ids to yes allows the local finder to refresh itself
+# properly and show changes to files that are made on sharepoints.
+file_ids_off=yes" > /etc/nsmb.conf
+      chown root:wheel /etc/nsmb.conf                  
+      chmod 644 /etc/nsmb.conf                   
+      ScriptLogging "nsmb.conf was removed and updated"
+   #
+   else
+echo "# Configuration file for R/GA SMB Mounts 
+#
+[default]
+# Disables checking for SMB signing on the client.
+# Digital signing is not used at R/GA and checking for it causes SMB
+# preformance issues on the client.
+signing_required=no
+# Setting file_ids to yes allows the local finder to refresh itself
+# properly and show changes to files that are made on sharepoints.
+file_ids_off=yes" > /etc/nsmb.conf
+      chown root:wheel /etc/nsmb.conf
+      chmod 644 /etc/nsmb.conf
+      ScriptLogging "nsmb.conf file created"
+   fi
+fi
+
+ScriptLogging "Disable *Connecting to Server for the first time* pop up."
+/usr/bin/defaults write /Library/Preferences/com.apple.NetworkAuthorization AllowUnknownServers -bool YES
+
+ScriptLogging "Configuring Default Desktop Image"
+
+if [[ ${osvers} -eq 12 ]]
+  then
+    if [ ! -e /Library/Desktop\ Pictures/Sierra_Default.jpg ]
+    then
+    ScriptLogging "Moving RGA Default Desktop image for OS 10.12 into place"
+    mv /Library/Desktop\ Pictures/Sierra.jpg /Library/Desktop\ Pictures/Sierra_Default.jpg
+    sleep 1
+    mv /Library/Desktop\ Pictures/RGA-Desktop.jpg /Library/Desktop\ Pictures/Sierra.jpg
+    else
+    ScriptLogging "Looks like the OS X Default Image for 10.12 has already been moved out of the way. Not taking any action"
+    fi
+elif [[ ${osvers} -eq 13 ]]
+  then
+    if [ ! -e /Library/Desktop\ Pictures/High\ Sierra_Default.jpg ]
+    then
+    ScriptLogging "Moving RGA Default Desktop image  for OS 10.13 into place"
+    mv /Library/Desktop\ Pictures/High\ Sierra.jpg /Library/Desktop\ Pictures/High\ Sierra_Default.jpg
+    sleep 1
+    mv /Library/Desktop\ Pictures/RGA-Desktop.jpg /Library/Desktop\ Pictures/High\ Sierra.jpg
+    else
+    ScriptLogging "Looks like the OS X Default Image for 10.13 has already been moved out of the way. Not taking any action"
+    fi
+fi
+
+ScriptLogging "Removed the desktop image cache file so the lock screen background matches."
+rm /Library/Caches/com.apple.desktop.admin.png
+
+ScriptLogging "Disable *Connecting to Server for the first time* pop up."
+/usr/bin/defaults write /Library/Preferences/com.apple.NetworkAuthorization AllowUnknownServers -bool YES
+
+ScriptLogging "Setting Sophos Update Preferences"
+/usr/bin/defaults write /Library/Preferences/com.sophos.sau.plist UpdateInterval -int 180
+ScriptLogging "Updating Sophos"
+/usr/local/bin/SophosUpdate
+
+ScriptLogging "Done configuring system wide settings."
+ScriptLogging "========================================================="
+
+########## End Configuring System Settings ##########
+
+########## Configuring User Settingss ##########
+
+ScriptLogging "Configuring user specific settings. Please wait."
+
+## Add a sleep statment to give some time for things to shift into place
+/bin/sleep 3
+
+########## Setting contents of Default User Template ##########
+
+### Creating .anyconnect file for VPN Keychain Access ###
+
+ScriptLogging "Creating .anyconnect file for VPN configuration"
+
+## Get the current AD name of the machine
+
+AD_COMPNAME=$(dsconfigad -show | sed -n 's/\$//g;s/Computer.Account.*.=.//p')
+
+#Get the most current machine cert associated with the AD name
+
+MACHINE_CERT=$(security find-certificate -a -c "${AD_COMPNAME}" -Z | grep SHA | awk '{print $3}' | awk 'END{print$0}')
+
+##Create an xml config file for the vpn agent that will reside in the user home folder
+
+echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<AnyConnectPreferences>
+<DefaultUser></DefaultUser>
+<DefaultSecondUser></DefaultSecondUser>
+<ClientCertificateThumbprint>${MACHINE_CERT}</ClientCertificateThumbprint>
+<ServerCertificateThumbprint></ServerCertificateThumbprint>
+<DefaultHostName>Edison Data Center</DefaultHostName>
+<DefaultHostAddress></DefaultHostAddress>
+<DefaultGroup>RGA</DefaultGroup>
+<ProxyHost></ProxyHost>
+<ProxyPort></ProxyPort>
+<SDITokenType>none</SDITokenType>
+<ControllablePreferences></ControllablePreferences>
+</AnyConnectPreferences>" > /tmp/.anyconnect
+
+## End Creation of .anyconnect file ###
+
+########## Many thanks: https://raw.githubusercontent.com/rtrouton/rtrouton_scripts/master/rtrouton_scripts/first_boot/10.10/first_boot.sh
+########## Main differences: for loop added for User Template check, 10.10 particulars added
+
+## We act on the indivdiual templates because not all settings were applied if we just used non_localized
+
+ScriptLogging "Configuring user template settings."
+
+# Ensure the appropriate home folders currently exist
+# in the default template folders and if not create them.
+# Those folders being /Library/Preferences and /Library/Preferences/ByHost
+
+ScriptLogging "Creating Folders in User Templates"
+for USER_TEMPLATE in /System/Library/User\ Template/*
+  do
+     if [ ! -d "${USER_TEMPLATE}"/Library/Preferences ]
+      then
+        mkdir -p "${USER_TEMPLATE}"/Library/Preferences
+     fi
+     if [ ! -d "${USER_TEMPLATE}"/Library/Preferences/ByHost ]
+      then
+        mkdir -p "${USER_TEMPLATE}"/Library/Preferences/ByHost
+     fi
+      if [ ! -d "${USER_TEMPLATE}"/Library/Preferences/com.apple.LaunchServices ]
+      then
+        mkdir -p "${USER_TEMPLATE}"/Library/Preferences/com.apple.LaunchServices
+     fi
+  done 
+
+/bin/sleep 2
+
+# Sets the "Show scroll bars" setting (in System Preferences: General)
+# to "Always", disables 802.1X automatic connection for Ethernet connections,
+# and set finder options for the default user templates.
+####### Add options for disabling additional network services and setting network service order 
+####### Change template focus to non localized template
+
+ScriptLogging "Setting default scroll bar, finder, and mail preferences for user template."
+
+for USER_TEMPLATE in /System/Library/User\ Template/*
+  do
+        ## Display Name of Template being worked on. We use {} form of the variable because the quoted form of the variable would actually unquote it with quotes in use.
+        ScriptLogging "Configuring ${USER_TEMPLATE}"
+        #
+        ## Sets window scroll bars to always show
+	/usr/bin/defaults write "${USER_TEMPLATE}"/Library/Preferences/.GlobalPreferences AppleShowScrollBars -string Always
+  	#
+	## Stops prompting for 802.1x authentication when an ethernet cable is plugged in
+	/usr/bin/defaults write "${USER_TEMPLATE}"/Library/Preferences/ByHost/com.apple.network.eapolcontrol."$UUID" EthernetAutoConnect -bool false
+	#
+	## Set the Status Bar to diplay in finder windows. Capitalization of the preference key is important.
+	/usr/bin/defaults write "${USER_TEMPLATE}"/Library/Preferences/com.apple.finder.plist ShowStatusBar -bool true
+	/bin/sleep .5
+	#
+	## Set the Path Bar to diplay in finder windows. Capitalization of the preference key is important.
+  	/usr/bin/defaults write "${USER_TEMPLATE}"/Library/Preferences/com.apple.finder.plist ShowPathbar -bool true
+        /bin/sleep .5
+        #
+	## Set the new finder windows to default to the user's home. Capitalization of the preference key is important.
+        /usr/bin/defaults write "${USER_TEMPLATE}"/Library/Preferences/com.apple.finder.plist NewWindowTarget -string PfHm  
+	/bin/sleep .5
+	#
+	## Disable the creation of .DS_Store files on network volumes
+        /usr/bin/defaults write "${USER_TEMPLATE}"/Library/Preferences/com.apple.desktopservices DSDontWriteNetworkStores -bool true
+        #
+        ## Default Office 2016 to save locally instead of online
+	/usr/bin/defaults write "${USER_TEMPLATE}"/Library/Group\ Containers/UBF8T346G9.Office/com.microsoft.officeprefs.plist DefaultsToLocalOpenSave -bool TRUE
+        #
+	## Remove existing launch services file
+	/bin/rm -rf "${USER_TEMPLATE}"/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist > /dev/null 2>&1
+        #
+	## Create LaunchServices array.
+	"$plistBuddy" -c "add LSHandlers array" "${USER_TEMPLATE}"/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist > /dev/null 2>&1
+        #
+	## Default Calendar invites to open with Outlook
+	"$plistBuddy" -c "add LSHandlers:0:LSHandlerContentType string com.apple.ical.ics" "${USER_TEMPLATE}"/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist
+	"$plistBuddy" -c "add LSHandlers:0:LSHandlerRoleAll string com.microsoft.outlook" "${USER_TEMPLATE}"/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist
+        #
+	## Default contact cards to open with outlook
+       	"$plistBuddy" -c "add LSHandlers:1:LSHandlerContentType string public.vcard" "${USER_TEMPLATE}"/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist
+	"$plistBuddy" -c "add LSHandlers:1:LSHandlerRoleAll string com.microsoft.outlook" "${USER_TEMPLATE}"/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist
+        # 
+	## Default mailto links to open with outlook
+	"$plistBuddy" -c "add LSHandlers:2:LSHandlerURLScheme string mailto" "${USER_TEMPLATE}"/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist
+	"$plistBuddy" -c "add LSHandlers:2:LSHandlerRoleAll string com.microsoft.outlook" "${USER_TEMPLATE}"/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist
+        #
+	## Default email to open with outlook
+	"$plistBuddy" -c "add LSHandlers:3:LSHandlerContentType string com.apple.mail.email" "${USER_TEMPLATE}"/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist
+	"$plistBuddy" -c "add LSHandlers:3:LSHandlerRoleAll string com.microsoft.outlook" "${USER_TEMPLATE}"/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist
+        # 
+	## Add defaults for Outlook 2011 items (calendar and emails)
+	"$plistBuddy" -c "add LSHandlers:4:LSHandlerContentType string com.microsoft.outlook14.icalendar" "${USER_TEMPLATE}"/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist
+	"$plistBuddy" -c "add LSHandlers:4:LSHandlerRoleAll string com.microsoft.outlook" "${USER_TEMPLATE}"/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist
+	"$plistBuddy" -c "add LSHandlers:5:LSHandlerContentType string com.microsoft.outlook14.email-message" "${USER_TEMPLATE}"/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist
+	"$plistBuddy" -c "add LSHandlers:5:LSHandlerRoleAll string com.microsoft.outlook" "${USER_TEMPLATE}"/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist
+	#
+	##Set the correct permissions
+	/bin/chmod 644  "${USER_TEMPLATE}"/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist
+	#
+	## Copy .anyconnect file and set the correct permissions
+    	/bin/cp /tmp/.anyconnect "${USER_TEMPLATE}"/
+    	/usr/sbin/chown root:wheel "${USER_TEMPLATE}"/.anyconnect >/dev/null 2>&1
+    	/bin/chmod 0644 "${USER_TEMPLATE}"/.anyconnect >/dev/null 2>&1 
+	# 
+done
+
+## Show external mount points, hard drives, and servers on Desktop.
+## Only applied to the English template due to unexpected results in other languages
+
+ScriptLogging "Configuring English Languauge Template Desktop Display Settings"
+
+/usr/bin/defaults write "/System/Library/User Template/English.lproj/Library/Preferences/com.apple.finder" ShowExternalHardDrivesOnDesktop -bool true
+/usr/bin/defaults write "/System/Library/User Template/English.lproj/Library/Preferences/com.apple.finder" ShowHardDrivesOnDesktop -bool true
+/usr/bin/defaults write "/System/Library/User Template/English.lproj/Library/Preferences/com.apple.finder" ShowMountedServersOnDesktop -bool true
+/usr/bin/defaults write "/System/Library/User Template/English.lproj/Library/Preferences/com.apple.finder" ShowRemovableMediaOnDesktop -bool true
+
+ScriptLogging "================================="
+ScriptLogging "Begin Dock Configurattion"
+ScriptLogging "Copying the default dock template."
+## Set User Template Dock Items
+# The default user template does not contain a dock plist. That lives inside the resources folder of the Dock app.
+## We must modify the existing dock template plist. Creating a plist from scratch will have no effect.
+/bin/cp -f /System/Library/CoreServices/Dock.app/Contents/Resources/en.lproj/default.plist /System/Library/User\ Template/English.lproj/Library/Preferences/com.apple.dock.plist
+/bin/sleep 2
+# Set the correct permissions
+/bin/chmod 600 /System/Library/User\ Template/English.lproj/Library/Preferences/com.apple.dock.plist
+/bin/sleep 1
+## Try to create an empty dockfixup plist to prevent default icons from being added to the dock.
+## This does not work as of 10.12.6 but hey you never know.
+/usr/bin/defaults write /Library/Preferences/com.apple.dockfixup.plist add-app -array ""
+sleep 1
+
+# Removing All icons from the default dock
+# Requires the use of dockutil
+# Adds user default dock items
+# Prevent OS X from adding it's default icons to the dock
+# Only restart the dock after the last change for each group in order to stop
+# excessive restarts of the dock and to prevent the OS from ignoring changes
+
+ScriptLogging "Disable Dockfixup from adding additional items to the dock."
+#As of 10.12.6 this command does not work. But we'll keep it here just in case Apple comes back around.
+/usr/bin/defaults write /System/Library/User\ Template/English.lproj/Library/Preferences/com.apple.dock.plist AllowDockFixupOverride -bool YES
+
+ScriptLogging "Setting Default Dock items in the English Language Template."
+## We can think about consolidating this function to the local script that we add further down to
+## remove the additional dock items which might be more efficient BUT then we will have to add to the 
+## script the logic to check if the machine is a laptop for the VPN icon which will increase the time it takes to run
+
+/bin/sleep 2
+/usr/local/bin/dockutil --remove all '/System/Library/User Template/English.lproj'
+/bin/sleep 2
+/usr/local/bin/dockutil --add '/Applications/Launchpad.app' --no-restart '/System/Library/User Template/English.lproj'
+/bin/sleep 2
+/usr/local/bin/dockutil --add '/Applications/Safari.app' --no-restart '/System/Library/User Template/English.lproj'
+/bin/sleep 2
+/usr/local/bin/dockutil --add '/Applications/Microsoft Lync.app' --no-restart '/System/Library/User Template/English.lproj'
+/bin/sleep 2
+/usr/local/bin/dockutil --add '/Applications/Microsoft Outlook.app' --no-restart '/System/Library/User Template/English.lproj'
+/bin/sleep 2
+/usr/local/bin/dockutil --add '/Applications/Microsoft Word.app' --no-restart '/System/Library/User Template/English.lproj'
+/bin/sleep 2
+/usr/local/bin/dockutil --add '/Applications/Self Service.app' --no-restart '/System/Library/User Template/English.lproj'
+/bin/sleep 2
+### ADD VPN ICON FOR LAPTOPS
+if [ "$hardware_type" = "MacBookAir" ] || [ "$hardware_type" = "MacBookPro" ] || [ "$hardware_type" = "MacBook" ]; then
+   /usr/local/bin/dockutil --add '/Applications/Cisco/Cisco AnyConnect Secure Mobility Client.app' --position end --no-restart '/System/Library/User Template/English.lproj'
+   /bin/sleep 2
+fi
+##
+/usr/local/bin/dockutil --add '/Applications/RGA Servers' --view list --display folder --no-restart '/System/Library/User Template/English.lproj'
+/bin/sleep 2
+#
+## We use PlistBuddy here because docutil has a problem writing out relative folders
+## persistant-others is the part of the dock that holds folders. It is an array.
+## We add the home folder to the second spot (1) since RGA servers is in the first (0)
+"$plistBuddy" -c "add persistent-others:1:tile-data:arrangment integer 2 " /System/Library/User\ Template/English.lproj/Library/Preferences/com.apple.dock.plist
+/bin/sleep 1
+"$plistBuddy" -c "add persistent-others:1:tile-data:home\ directory\ relative string ~/Documents" /System/Library/User\ Template/English.lproj/Library/Preferences/com.apple.dock.plist
+/bin/sleep 1
+"$plistBuddy" -c "add persistent-others:1:tile-type string directory-tile" /System/Library/User\ Template/English.lproj/Library/Preferences/com.apple.dock.plist
+/bin/sleep 1
+"$plistBuddy" -c "add persistent-others:1:tile-data:showas integer 3 " /System/Library/User\ Template/English.lproj/Library/Preferences/com.apple.dock.plist
+/bin/sleep 1
+"$plistBuddy" -c "add persistent-others:1:tile-data:displayas integer 1 " /System/Library/User\ Template/English.lproj/Library/Preferences/com.apple.dock.plist
+/bin/sleep 2
+
+########## English Template Dock Fixup ##########
+
+echo "#!/bin/bash
+#
+/usr/local/bin/dockutil --remove 'Siri' --no-restart
+/usr/local/bin/dockutil --remove 'Maps' --no-restart
+/usr/local/bin/dockutil --remove 'Photos' --no-restart
+/usr/local/bin/dockutil --remove 'iBooks' --no-restart
+/usr/local/bin/dockutil --remove 'iBooks' --no-restart
+/usr/local/bin/dockutil --remove 'Downloads' 
+
+rm ~/Library/LaunchAgents/com.rga.DockFixup.plist
+
+## The unload command must be the last line in the script (even before the rm command)
+## otherwsie the script called by the launch agent will stop running
+## and never remove the Launch Agent
+
+launchctl unload ~/Library/LaunchAgents/com.rga.DockFixup.plist" > /Library/Scripts/RGADockCleanup
+
+chown root:wheel /Library/Scripts/RGADockCleanup
+chmod 755 /Library/Scripts/RGADockCleanup
+
+echo "<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+<key>Label</key>
+<string>com.rga.dockcleanup</string>
+<key>Program</key>
+<string>/Library/Scripts/RGADockCleanup</string>
+<key>RunAtLoad</key>
+<true/>
+</dict>
+</plist>" > /System/Library/User\ Template/English.lproj/Library/LaunchAgents/com.rga.DockFixup.plist
+
+chown root:wheel /System/Library/User\ Template/English.lproj/Library/LaunchAgents/com.rga.DockFixup.plist
+chmod 644 /System/Library/User\ Template/English.lproj/Library/LaunchAgents/com.rga.DockFixup.plist
+
+########## END English Template Dock Fixup ##########
+
+ScriptLogging "End Dock Configuration"
+ScriptLogging "======================"
+ScriptLogging "# END Default User Template Configuration #"
+ScriptLogging "==========================================="
+
+########## END Default User Template Configuration ##########
+
+########## Existing User Home Directory Configuration ##########
+
+ScriptLogging "### Configuring existing users. ###"
+
+## Remove extraneous buildadmin user folder if it exists 
+## to prevent errors in user template configs
+
+ScriptLogging "Removing extraneous home folders"
+
+   if [ -d /Users/buildadmin ]
+   then
+   ScriptLogging "Removing buildadmin home directory"
+   /bin/rm -R /Users/buildadmin
+   fi
+
+ScriptLogging "Configuring existing home directories."
+
+# Checks the existing user folders in /Users for the presence of
+# the Library/Preferences directory and /Library/Preferences/ByHost.
+# If the directory is not found, it is created.
+
+##### Change permissions settings to 1 line
+
+for USER_HOME in /Users/*
+  do
+    USER_UID=$(basename "${USER_HOME}")
+    if [ "${USER_UID}" != "Shared" ] 
+     then 
+      if [ ! -d "${USER_HOME}"/Library/Preferences ]
+       then
+        mkdir -p "${USER_HOME}"/Library/Preferences
+        /usr/sbin/chown "${USER_UID}" "${USER_HOME}"/Library
+        /usr/sbin/chown "${USER_UID}" "${USER_HOME}"/Library/Preferences
+      fi
+      if [ ! -d "${USER_HOME}"/Library/Preferences/ByHost ]
+       then
+        mkdir -p "${USER_HOME}"/Library/Preferences/ByHost
+        /usr/sbin/chown "${USER_UID}" "${USER_HOME}"/Library
+        /usr/sbin/chown "${USER_UID}" "${USER_HOME}"/Library/Preferences
+	/usr/sbin/chown "${USER_UID}" "${USER_HOME}"/Library/Preferences/ByHost
+      fi
+      if [ ! -d "${USER_HOME}"/Documents ]
+       then
+        mkdir -p "${USER_HOME}"/Documents
+        /usr/sbin/chown "${USER_UID}" "${USER_HOME}"/Documents
+      fi
+    fi
+done
+
+# Sets the "Show scroll bars" setting (in System Preferences: General)
+# to "Always" and disables 802.1X automatic connection for Ethernet connections
+# for all existing users. Show the path bar and status bar in new finder windows
+# and default new windows to open to the users home directory.
+# We don't worry about default mail and calendar options.
+####### NOTE: Add options for disabling additional network services and setting network service order
+
+ScriptLogging "Setting default scroll bar, network, and finder options for existing users"
+
+for USER_HOME in /Users/*
+  do
+    USER_UID=$(basename "${USER_HOME}")
+    if [ "${USER_UID}" != "Shared" ]
+       then
+        ## List home directory we are configuring
+        ScriptLogging "Configuring ${USER_HOME}"
+        ## Sets window scroll bars to always show
+        /usr/bin/defaults write "${USER_HOME}"/Library/Preferences/.GlobalPreferences AppleShowScrollBars -string Always
+        #
+        ## Stops prompting for 802.1x authentication when an ethernet cable is plugged in
+        /usr/bin/defaults write "${USER_HOME}"/Library/Preferences/ByHost/com.apple.network.eapolcontrol."$UUID" EthernetAutoConnect -bool false
+        #
+        ## Set the Status Bar to diplay in finder windows. Capitalization of the preference key is important.
+        /usr/bin/defaults write "${USER_HOME}"/Library/Preferences/com.apple.finder.plist ShowStatusBar -bool true
+        /bin/sleep .5
+        #
+        ## Set the Path Bar to diplay in finder windows. Capitalization of the preference key is important.
+        /usr/bin/defaults write "${USER_HOME}"/Library/Preferences/com.apple.finder.plist ShowPathbar -bool true
+        /bin/sleep .5
+        #
+        ## Set the new finder windows to default to the user's home. Capitalization of the preference key is important.
+        /usr/bin/defaults write "${USER_HOME}"/Library/Preferences/com.apple.finder.plist NewWindowTarget -string PfHm
+        /bin/sleep .5
+        #
+	## Disable the creation of .DS_Store files on network volumes
+        /usr/bin/defaults write "${USER_HOME}"/Library/Preferences/com.apple.desktopservices DSDontWriteNetworkStores -bool true
+	#
+	## Show external mount points, hard drives, and servers on Desktop.
+	/usr/bin/defaults write "${USER_HOME}"/Library/Preferences/com.apple.finder ShowExternalHardDrivesOnDesktop -bool true
+	/usr/bin/defaults write "${USER_HOME}"/Library/Preferences/com.apple.finder ShowHardDrivesOnDesktop -bool true
+	/usr/bin/defaults write "${USER_HOME}"/Library/Preferences/com.apple.finder ShowMountedServersOnDesktop -bool true
+	/usr/bin/defaults write "${USER_HOME}"/Library/Preferences/com.apple.finder ShowRemovableMediaOnDesktop -bool true        
+        #
+	## Default Office 2016 to save locally instead of online
+        /usr/bin/defaults write "${USER_HOME}"/Library/Group\ Containers/UBF8T346G9.Office/com.microsoft.officeprefs.plist DefaultsToLocalOpenSave -bool TRUE        
+        #
+        ## Make sure the owner is right on the existing user's Library folder
+	/usr/sbin/chown -R "${USER_UID}":staff "${USER_HOME}"/Library
+        #
+        ## Copy .anyconnect file and set the correct permissions
+        /bin/cp /tmp/.anyconnect "${USER_HOME}"/
+	/usr/sbin/chown "${USER_UID}":staff "${USER_HOME}"/.anyconnect >/dev/null 2>&1
+	/bin/chmod 0644 "${USER_HOME}"/.anyconnect >/dev/null 2>&1
+        #
+      fi
+  done
+
+ScriptLogging "Setting User Dock items and Launch Services Items"
+## We’re Using USER_UID (name of users home dir) with /Users added on for the full path
+## to their home instead of $USER_HOME which has the full path in the variable because some commands
+## seem to behave better this way.
+## First we have to copy the dock preference file in because it does not seem to get pulled in automatically
+## from the user template on initial home directory creation. Since the default plist is already modified we do not
+## have to run dockutil on the user's docks. This is also the same for the default launchservices file with the 
+## presets for office.
+
+for USER_HOME in /Users/*
+do
+USER_UID=$(basename "${USER_HOME}")
+if [ "${USER_UID}" != "Shared" ]
+then
+/bin/rm -f /Users/"$USER_UID"/Library/Preferences/com.apple.dock.plist
+/bin/sleep 1
+/bin/cp /System/Library/User\ Template/English.lproj/Library/Preferences/com.apple.dock.plist /Users/"$USER_UID"/Library/Preferences/com.apple.dock.plist
+/bin/sleep .5
+/bin/rm -rf /Users/"$USER_UID"/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist > /dev/null 2>&1
+/bin/sleep .5
+/usr/bin/ditto /System/Library/User\ Template/English.lproj/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist /Users/"$USER_UID"/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist
+/bin/sleep 3
+/usr/sbin/chown "${USER_UID}" /Users/"$USER_UID"/Library/Preferences/com.apple.dock.plist
+/usr/sbin/chown "${USER_UID}" /Users/"$USER_UID"/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist
+fi
+done
+
+##We need to restart the dock in case anyone is logged in but we hold off on doing that until
+##after the all the policies have run later in the script so all the icons show up correctly.
+
+ScriptLogging "END Configuring user specific settings."
+ScriptLogging "======================================="
+
+########## END Existing User Home Directory Configuration ##########
+
+########## Disable iCloud and Siri Sign in Prompts ##########
+# Checks first to see if the Mac is running 10.7.0 or higher. 
+# If so, iCloud and Diagnostic pop-up settings are set to be disabled.
+# Affects User Templates and existing users.
+
+ScriptLogging "Disabling initial iCloud, Siri, and Data and Privacy setup for default home directories."
+
+if [[ ${osvers} -ge 7 ]]; then
+
+ for USER_TEMPLATE in /System/Library/User\ Template/*
+  do
+    /usr/bin/defaults write "${USER_TEMPLATE}"/Library/Preferences/com.apple.SetupAssistant DidSeeCloudSetup -bool TRUE
+    /usr/bin/defaults write "${USER_TEMPLATE}"/Library/Preferences/com.apple.SetupAssistant GestureMovieSeen none
+    /usr/bin/defaults write "${USER_TEMPLATE}"/Library/Preferences/com.apple.SetupAssistant LastSeenCloudProductVersion "${sw_version}"
+    /usr/bin/defaults write "${USER_TEMPLATE}"/Library/Preferences/com.apple.SetupAssistant LastSeenBuddyBuildVersion "${sw_build}"
+    /usr/bin/defaults write "${USER_TEMPLATE}"/Library/Preferences/com.apple.SetupAssistant DidSeeSiriSetup -bool TRUE
+    /usr/bin/defaults write "${USER_TEMPLATE}"/Library/Preferences/com.apple.SetupAssistant DidSeePrivacy -bool TRUE
+done
+
+ScriptLogging "Disabling initial iCloud, Siri, and Data and Privacy setup setup for existing users." 
+ 
+for USER_HOME in /Users/*
+  do
+    USER_UID=$(basename "${USER_HOME}")
+    if [ "${USER_UID}" != "Shared" ] 
+    then 
+        /usr/bin/defaults write "${USER_HOME}"/Library/Preferences/com.apple.SetupAssistant DidSeeCloudSetup -bool TRUE
+        /usr/bin/defaults write "${USER_HOME}"/Library/Preferences/com.apple.SetupAssistant GestureMovieSeen none
+        /usr/bin/defaults write "${USER_HOME}"/Library/Preferences/com.apple.SetupAssistant LastSeenCloudProductVersion "${sw_version}"
+        /usr/bin/defaults write "${USER_HOME}"/Library/Preferences/com.apple.SetupAssistant LastSeenBuddyBuildVersion "${sw_build}"
+        /usr/bin/defaults write "${USER_HOME}"/Library/Preferences/com.apple.SetupAssistant DidSeeSiriSetup -bool TRUE
+        /usr/bin/defaults write "${USER_HOME}"/Library/Preferences/com.apple.SetupAssistant DidSeePrivacy -bool TRUE
+        chown "${USER_UID}" "${USER_HOME}"/Library/Preferences/com.apple.SetupAssistant.plist
+    fi
+  done
+fi
+########## End Disabled iCloud Sign in Prompts ##########
+
+########## End Configure User Settings ##########
+
+########## Check for Recovery Partition #########
+## This hasn't been necessary post 10.11 as OSX has becomne 
+## consistenly reliably in laying down the restore partition if the drive is 
+## imaged from an outside source, And is completely unnecessary if a machine is 
+## setup from DEP or the recovery partition.
+
+#ScriptLogging "Checking for Recovery Partition"
+
+#recoveryHDPresent=$(/usr/sbin/diskutil list | grep "Recovery HD")
+
+#if [ "$recoveryHDPresent" != "" ]; then
+#	ScriptLogging "Recovery HD Parition found"
+#else
+#        ScriptLogging "Recovery Partition not found. Creating" 
+#	"$jamfBinary" policy -event SierraRecoveryPartition -verbose
+#fi
+
+########## Install stuff via policy ##########
+
+##### Comment out if not using JAMF
+ScriptLogging "======================================="
+ScriptLogging "Begin Installing items via Policy."
+
+ScriptLogging "Running JAMF Post Deployment Policies."
+"$jamfBinary" policy -event postImaging -verbose
+
+### Enable Filevault For Laptops
+ScriptLogging "Enabling FileVault for Laptops"
+if [ "$hardware_type" = "MacBookAir" ] || [ "$hardware_type" = "MacBookPro" ] || [ "$hardware_type" = "MacBookPro" ]; then
+   ScriptLogging "Laptop Detected. Enabling FileVault"
+   "$jamfBinary" policy -event enablefilevault -verbose
+   #"$jamfBinary" policy -event deployment_EnableFileVault
+fi
+# Another recon is run as part of the FileVault Process
+
+ScriptLogging "END Installing items via policy"
+ScriptLogging "==============================="
+
+########## End Policy Items ##########
+
+########## Write Client Information and Clean Up ##########
+
+# Add OS info and date Imaged to OS Information File
+ScriptLogging "Writing Client, OS, and Model information"
+echo "***********
+OS Version: ${sw_version}
+***********
+Build Version: ${sw_build}
+***********
+Hardware Model: ${machine_model}
+***********
+Date Enrolled: $(/bin/date "+%m/%d/%Y")
+***********
+This enrollment contains (at least) version 16.14.1 of Microsoft Office.
+All Kerberos authentication modifications have been removed.
+Enterprise Connect is also installed and password expiration prompts
+at the login window are disabled." > /etc/ClientInfo.txt
+/bin/sleep 1
+
+ScriptLogging "Removing extraneous items post enrollment."
+
+## Check for and remove buildadmin home directory
+   if [ -d /Users/buildadmin ]
+   then
+   ScriptLogging "Removing buildadmin home directory"
+   /bin/rm -R /Users/buildadmin
+   fi
+
+
+## Reomving Appple Default Appplications 
+## Check for and remove Garageband Application
+###
+### Remove if you wish to keep this apps in your environemtn.
+
+   if [ -d /Applications/Garageband.app ]
+   then
+   ScriptLogging "Removing Garageband"
+   /bin/rm -R /Applications/Garageband.app
+   fi
+## Check for and remove iMovie Application
+   if [ -d /Applications/iMovie.app ]
+   then
+   ScriptLogging "Removing iMovie"
+   /bin/rm -R /Applications/iMovie.app
+   fi
+## Check for and remove Keynote Application
+   if [ -d /Applications/Keynote.app ]
+   then
+   ScriptLogging "Removing Keynote"
+   /bin/rm -R /Applications/Keynote.app
+   fi
+## Check for and remove Numbers Application
+   if [ -d /Applications/Numbers.app ]
+   then
+   ScriptLogging "Removing Numbers"
+   /bin/rm -R /Applications/Numbers.app
+   fi
+## Check for and remove Pages Application
+   if [ -d /Applications/Pages.app ]
+   then
+   ScriptLogging "Removing Pages"
+   /bin/rm -R /Applications/Pages.app
+   fi
+
+## Remove temp anyconnect file
+   /bin/rm -Rf /tmp/.anyconnect 2>&1
+########## End Clean Up ##########
+
+## Re-index Spotlight
+ScriptLogging "Rebuilding spotlight database"
+/usr/bin/mdutil -i off /
+/bin/sleep 3
+if [ -e /.metadata_never_index ]
+   then
+   /bin/rm /.metadata_never_index
+fi
+/bin/sleep 3
+/bin/rm -R /.Spotlight-v100
+/bin/sleep 3
+/usr/bin/mdutil -i on /
+/bin/sleep 3
+/usr/bin/mdutil -E /
