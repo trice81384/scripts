@@ -17,7 +17,7 @@
 ## Define Global Variables
 loggedInUser=""
 AvailableUpdates=""
-## Total amount of RestartReq="0update chances we will give the user
+## Total amount of update chances we will give the user
 TotalAttempts="3"
 ## Final Chance is always 1 more then TotalAttempts can code this to just add 1 to 
 ## a blank FinalChance Variable which will require 1 less variable to update
@@ -127,9 +127,7 @@ $UpdatesReqRestart
 
 This is user installation attempt $UpdateAttempts of $TotalAttempts.
            
-Attempt $FinalChance will install updates automatically and your machine will restart.
-
-**Updates may also be run from Electric Self Service.**"
+Attempt $FinalChance will install updates automatically and your machine will restart."
 
            UserResponse=$("$JAMFHelperPath" -windowType utility -title "$JAMFHelperTitle" \
                -icon "$JAMFHelperIcon" -iconSize 128 -heading "$JAMFHelperHeading" -alignHeading center -description "$InformativeTextMsg" \
