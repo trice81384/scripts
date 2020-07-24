@@ -1,5 +1,19 @@
 #!/bin/sh
 
+## This script is designed to be called from a JAMF policy scoped to run once a day and ideally
+## scoped to a Smart Group where software updates avaiable are greater than 0.
+## If updates not requiring a restart a found it will call a policy in JAMF to install the softare updates. 
+## This has the added benefit of resetting the machine's SUS to any defined in JAMF network segments. 
+## If updates with restarts are found users are notified what the update is and that it the machine will be
+## rebooted at the end of the update process. Users will then be given the option to reboot their machine or
+## let it reboot automatically after 5 mins. Users can also defer the updates for x number of days before they 
+## are automatically insatlled. It is recommended to also enable a self service policy in conjuction with this one 
+## so users can install updates at a more appropriate time for them.
+
+## Many thanks to the many people at www.jamfnation.com for providing the baisis and inspiration for this script 
+## in partcular Mike Morales (@mm270) and his script found here
+## https://github.com/mm2270/CasperSuiteScripts/blob/master/selectable_SoftwareUpdate.sh
+
 ## Define Global Variables
 loggedInUser=""
 AvailableUpdates=""
