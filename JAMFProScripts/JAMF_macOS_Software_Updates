@@ -17,11 +17,11 @@
 ## Define Global Variables
 loggedInUser=""
 AvailableUpdates=""
-## Total amount of RestartReq="0update chances we will give the user
+## Total amount of update chances we will give the user
 TotalAttempts="3"
 ## Final Chance is always 1 more then TotalAttempts can code this to just add 1 to 
 ## a blank FinalChance Variable which will require 1 less variable to update
-FinalChance="4"
+FinalChance=$(($TotalAttempts+1))
 UpdateCount="0"
 UpdateAttempts="0"
 UpdateChancesLeft="0"
@@ -36,20 +36,15 @@ JAMFHelperDescription="Please save all your work, quit open programs, and make s
 
 This process will take approximately 5-10 minutes.
 
-Once completed your computer will reboot and begin the upgrade."
+Once completed your computer will reboot and begin the update."
 
-## This if statement is designed to check for the location of the jamf binary in multiple 
-## places due to changes in OSX associated with JAMF's upgrade to version 9.81
-## References to the JAMF Binary must be changed to "$jamfBinary"
-## Added 12/1/15 by tomr
+## JAMF Binary Check
 ##
-if [ -e /usr/sbin/jamf ]
-   then
-       # JAMF Binary found at pre 9.81 location
-       echo "JAMF Binary found at pre 9.81 location"
-       jamfBinary="/usr/sbin/jamf"
-       #
-   elif [ -e /usr/local/jamf/bin/jamf ]
+## This if statement is designed to check for the location of the jamf binary in multiple places 
+## due to changes in OSX associated with JAMF's upgrade to version 9.81
+## References to the JAMF Binary must be changed to "$jamfBinary"
+##
+if [ -e /usr/local/jamf/bin/jamf ]
    then
       # JAMF Binary found at 9.81 or later location
       echo "JAMF Binary found at 9.81 or later location"
@@ -66,9 +61,18 @@ if [ -e /usr/sbin/jamf ]
 fi
 ## End JAMF Check if statement
 
-## Set the Organization/Department/Division name. Used in dialog titles 
+##  Get minor version of OS X
+##  Not currently used but could be someday.
 
-orgName=""
+osVers=$( sw_vers -productVersion | cut -d. -f2 )
+
+## Set the installAllAtLogin flag here to 'yes' or leave it blank (equivalent to 'no')
+## Function: When the script is run on a Mac that is at the login window, if the flag is set to 'yes',
+## it will lock the login window to prevent unintended logins and proceed to install all available updates.
+## Once completed, the login window will either be unlocked in the case of no restarts needed,
+## or a restart will be done immediately to complete the installations.
+## Not currenly used but might be a useful flag later
+installAllAtLogin="yes"
 
 ## If the file containing the number of software update attempts does not exist or has a size
 ## of RestartReq="0zero bytes then set the number of update attempts to zero by writing just a zero to the file
@@ -111,7 +115,7 @@ We recommend saving any important documents now.
 Your Mac will reboot in order to complete the update."
            
            "$JAMFHelperPath" -windowType utility -title "$JAMFHelperTitle" \
-           -icon "$JAMFHelperIcon" -iconSize 128 -heading "Software Updates Insralling" -alignHeading center -description "$installMSG" \
+           -icon "$JAMFHelperIcon" -iconSize 128 -heading "Software Updates Installing" -alignHeading center -description "$installMSG" \
            -alignDescription center -timeout 15
            echo "Forced installation of software updates happening."
            installUpdates    
@@ -156,7 +160,7 @@ installUpdates ()
 {
 
 ## When invoking this function there should be no JAMF helper windows running
-## but jest in case there are check for the process, disown it, and kill it/
+## but just in case there are check for the process, disown it, and kill it.
 
 jamfHelperUID=$(pgrep jamfHelper)
 
@@ -180,14 +184,15 @@ jamfHelperUID=$(pgrep jamfHelper)
 disown $jamfHelperUID
 
 ## Call the software update process
-/usr/sbin/softwareupdate -i -a
+#/usr/sbin/softwareupdate -i -a
+SWU_OUTPUT=$(softwareupdate -ia --no-scan | grep -e halt)
 
-## We put the recon here so it runs in the backgound and as the restart countdown begins.
+## We put the recon here so it runs in the background and as the restart countdown begins.
 
 "$jamfBinary" recon &
 
-## Set the inital timer to 300 which will end up equating to 5 mins.
-## We use let here so it is sure to asign the variable as a number.
+## Set the initial timer to 300 which will end up equating to 5 mins.
+## We use let here so it is sure to assign the variable as a number.
 ## Probably not necessary but just in case.
 
 let Counter="300"
@@ -200,12 +205,12 @@ if [ -e /tmp/UserInput ]
    rm /tmp/UserInput
 fi
 
-## Display a JAMF Helper window notifiying the user that a reboot in order to upgrade to Mojave will happen at 
+## Display a JAMF Helper window notifying the user that a reboot in order to update will happen at 
 ## a specified period of time and give them the option to enable it immediately.
-## We send the output to named pipe and keep the process running in the background which allows for two things.
+## We send the output to the named pipe and keep the process running in the background which allows for two things.
 ## It keeps the window displayed but allows the while loop to start the countdown right away and by sending the 
-## output of command to the nammed pipe we can then continually assign its contents to a variable inside the while
-## loop allowing the if statement in that loop to check the status of the varible which equates to a user selecting
+## output of command to the named pipe we can then continually assign its contents to a variable inside the while
+## loop allowing the if statement in that loop to check the status of the variable which equates to a user selecting
 ## to reboot immediately. If we didn't do it this way the output of the command would only get checked once when the 
 ## command initially ran.
 
@@ -225,10 +230,9 @@ killall jamfHelper
 -icon "$JAMFHelperIcon" -iconSize 128 -heading "Software Updates Installed" -alignHeading center -description "$RebootMsg" \
 -alignDescription center -button1 "Reboot" > /tmp/UserInput &
 
-## While loop to run for at least 300 interations (which equals 5 mins) while checking certain conditions.
+## While loop to run for at least 300 iterations (which equals 5 mins) while checking certain conditions.
 ## We inject a 1 second sleep command into each run of the while loop to approximate 5 minutes. If we did not
-## have the sleep command the loop would execute too quickly. Once the loop is over FileVault will be enabled
-## and ther machine will reboot.
+## have the sleep command the loop would execute too quickly. Once the loop is over the machine will reboot.
 
 while [ "$Counter" != "0" ]
 do
@@ -238,13 +242,13 @@ UserResponse=$(cat /tmp/UserInput)
 
 ## If UserResponse equals 0 (return code of pushing the button) then we assume user has selected to reboot now so
 ## we run execute the enable Mojave Update policy and reboot the machine so it is enforced for the
-## current user on login. We also set the counter 1 one as a safety mesaure in case it doesn't break out
-## of the loop right away. One more subtraction from the counter variable would occure cuasing it to equal
+## current user on login. We also set the counter 1 one as a safety measure in case it doesn't break out
+## of the loop right away. One more subtraction from the counter variable would occur causing it to equal
 ## 0 which would also cause the loop to end and FileVault to enable. We could use a break statement here to
 ## but I liked this method.
 ## If the user response has not equated to 0 then we'll pop uo a window displaying that there is only 60
 ## seconds left before the Mojave update is started and a reboot happens. We must get the PID of the previous jamfHelper
-## process and disown it first (to prevent unneccessary error messages) then kill it before we display the new
+## process and disown it first (to prevent unnecessary error messages) then kill it before we display the new
 ## message.
 
 if [ "$UserResponse" == "0" ]
@@ -281,8 +285,17 @@ killall jamfHelper
 
 ## Delete the update countfile once just so it's gone
 rm -r $UpdateAttemptsFile
-echo "Rebooting the Machine" 
-shutdown -r now
+#echo "Rebooting the Machine" 
+#shutdown -r now
+
+if [ "$SWU_OUTPUT" != "" ]
+   then
+     echo "Shutting down the system immediately."
+     halt
+   else
+     echo "Restarting the system immediately."
+     reboot
+fi
 
 }
 
@@ -298,18 +311,23 @@ UpdatesNoRestart=`cat /tmp/softwareupdates.txt | egrep -v 'restart|shutdown' | e
 
 if [ "$UpdatesReqRestart" == "" ] && [ "$UpdatesNoRestart" == "" ]
    then
-   echo "No new software to install"
-      elif [ "$UpdatesReqRestart" != "" ]
+   if [ -e "$UpdateAttemptsFile" ]
       then
-      RestartReq=1
-      echo "Restarts required equals $RestartReq"
-      updatesWithRestart
-      elif [ "$UpdatesNoRestart" != "" ]
-      then
-      RestartReq=0
-      echo "Restarts required equals $RestartReq"
-      installUpdatesNoRestart
-      fi
+        rm -rf "$UpdateAttemptsFile"
+        echo "Software Update Counter removed."
+   fi
+   echo "No new software to install. "
+   elif [ "$UpdatesReqRestart" != "" ]
+        then
+          RestartReq=1
+          echo "Restarts required equals $RestartReq"
+          updatesWithRestart
+   elif [ "$UpdatesNoRestart" != "" ]
+        then
+          RestartReq=0
+          echo "Restarts required equals $RestartReq"
+          installUpdatesNoRestart
+  fi
 }
 
 #### This activates the entire script
