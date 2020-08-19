@@ -1,4 +1,20 @@
 #!/bin/bash
+
+### This script is designed to be run once a day and check for a cached macOS installer.
+### If the installer exists and a user is logged in they are prompted to install the update.
+### A user is given 3 chances to install the update on their own. On the 4th execution macOS is 
+### forcibly installed. A dummy receipt is also created to be used in conjunction with a smart group
+### to present the installer in Self Service.
+
+#### Special thanks to the following for inspiraton on various parts of the script/
+### Rich Trouton
+### https://github.com/rtrouton
+### Mike M
+### https://github.com/mm2270
+### Alexander Wolpert 
+###https://github.com/alex030
+### All the people on JAMF Nation
+
 #########################################################################################
 ################### Define Global Variables #############################################
 ## Values for Mojave should be the following:
