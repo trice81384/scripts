@@ -154,10 +154,10 @@ ScriptLogging "### Preparing to Bind Computer to Active Directory ###"
 # Get the Hostname for the computer and then translate lowercase characters to uppercase to conform
 # to AD Nomanclature. We user lower and upper instead of ranges in tr to account for all languagues if applicable.
 HOSTNAME=$(scutil --get ComputerName | tr '[:lower:]' '[:upper:]')
-USER='***REMOVED***'
-PASS='***REMOVED***'
-DOMAIN='***REMOVED***'
-OU='***REMOVED***'
+USER=''
+PASS=''
+DOMAIN=''
+OU=''
 
 ScriptLogging "Hostname is set to $HOSTNAME"
 
