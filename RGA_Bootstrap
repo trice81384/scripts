@@ -205,13 +205,13 @@ ScriptLogging "Adjusting client AD Computer Object Password Interval"
 /usr/sbin/dsconfigad -passinterval 30
 
 ScriptLogging "Setting authentication search locations"
-ScriptLogging "Adding ny.rga.com to search"
+ScriptLogging "Adding domain to search"
 /bin/sleep 1
-/usr/bin/dscl /Search -append / CSPSearchPath "/Active Directory/RGA/ny.rga.com"
+/usr/bin/dscl /Search -append / CSPSearchPath "/Active Directory/INSERT NETBIOS DOMAIN NAME HERE/INSERT DOMAIN HERE"
 
 ScriptLogging "Removing All Domains from search path"
 /bin/sleep 1
-/usr/bin/dscl /Search -delete / CSPSearchPath "/Active Directory/RGA/All Domains"
+/usr/bin/dscl /Search -delete / CSPSearchPath "/Active Directory/INSERT NETBIOS DOMAIN NAME HERE/All Domains"
 
 if [ -e /var/log/secure.log ]
    then 
@@ -240,7 +240,7 @@ ScriptLogging "Checking for Successful AD Bind and Connectivity"
 
 ADDomain="empty"
 Counter=0
-while [ "$ADDomain" != ny.rga.com ]
+while [ "$ADDomain" != INSERT DOMAIN FQDN HERE ]
 do
 ADDomain=$(/usr/bin/dig srv _LDAP._TCP.DC._MSDCS.INSERT_AD_DOMAIN_HERE +tcp +tries=1 +retry=1 +short | awk -F "." 'NR==1{print$2"."$3"."$4}')
 if [ "$ADDomain" = INSTERT_YOUR AD DOMAIN HERE ]
